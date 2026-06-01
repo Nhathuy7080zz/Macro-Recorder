@@ -42,8 +42,9 @@ static int gHasLastMove = 0;
 static LARGE_INTEGER gQpcFreq;
 
 // GUI Globals
-HWND gHwndMain, gHwndList, gHwndTime, gHwndP1, gHwndP2, gHwndUpdate, gHwndDelete;
-HWND gHwndLblP1, gHwndLblP2, gHwndStatus;
+HWND gHwndMain, gHwndList, gHwndStatus;
+HWND gHwndTime, gHwndX, gHwndY, gHwndKey, gHwndDown;
+HWND gHwndUpdate, gHwndDelete;
 int gSelectedEvent = -1;
 
 static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM wParam, LPARAM lParam);
@@ -89,18 +90,25 @@ static void stop_playback(void) {
 void RefreshList(void) {
     SendMessage(gHwndList, LB_RESETCONTENT, 0, 0);
     char buf[256];
+    char keyName[64];
     for (size_t i = 0; i < gEventCount; ++i) {
         MacroEvent* e = &gEvents[i];
+        unsigned long long tMs = (unsigned long long)(e->timeUs / 1000ULL);
+        
         if (e->type == EVENT_KEY) {
-            sprintf(buf, "[%zu] %llu ms - [Phím] VK:%u %s", i, (unsigned long long)(e->timeUs / 1000ULL), e->vk, e->down ? "(Nhấn)" : "(Thả)");
+            UINT scan = MapVirtualKeyA(e->vk, MAPVK_VK_TO_VSC);
+            if (scan == 0 || GetKeyNameTextA(scan << 16, keyName, sizeof(keyName)) == 0) {
+                sprintf(keyName, "Phím %u", e->vk);
+            }
+            sprintf(buf, "[%zu] %llu ms | BÀN PHÍM | %s (%s)", i, tMs, keyName, e->down ? "Nhấn xuống" : "Nhả ra");
         } else if (e->type == EVENT_MOUSE_MOVE) {
-            sprintf(buf, "[%zu] %llu ms - [Chuột] Di chuyển đến X:%d Y:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->x, e->y);
+            sprintf(buf, "[%zu] %llu ms | CHUỘT | Di chuyển tới (X: %d, Y: %d)", i, tMs, e->x, e->y);
         } else if (e->type == EVENT_MOUSE_BUTTON) {
-            sprintf(buf, "[%zu] %llu ms - [Chuột] Click flag:%u data:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->mouseFlags, e->mouseData);
+            sprintf(buf, "[%zu] %llu ms | CHUỘT | Click tại (X: %d, Y: %d)", i, tMs, e->x, e->y);
         } else if (e->type == EVENT_MOUSE_WHEEL) {
-            sprintf(buf, "[%zu] %llu ms - [Chuột] Cuộn flag:%u data:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->mouseFlags, e->mouseData);
+            sprintf(buf, "[%zu] %llu ms | CHUỘT | Cuộn chuột", i, tMs);
         } else {
-            sprintf(buf, "[%zu] %llu ms - UNKNOWN", i, (unsigned long long)(e->timeUs / 1000ULL));
+            sprintf(buf, "[%zu] %llu ms | KHÔNG RÕ", i, tMs);
         }
         LRESULT idx = SendMessageA(gHwndList, LB_ADDSTRING, 0, (LPARAM)buf);
         SendMessage(gHwndList, LB_SETITEMDATA, idx, (LPARAM)i);
@@ -353,20 +361,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         SetWindowTextA(gHwndTime, buf);
                         
                         if (e->type == EVENT_KEY) {
-                            SetWindowTextA(gHwndLblP1, "Phím (Mã VK):");
-                            SetWindowTextA(gHwndLblP2, "Hành động (1=Nhấn, 0=Thả):");
-                            sprintf(buf, "%u", e->vk); SetWindowTextA(gHwndP1, buf);
-                            sprintf(buf, "%u", e->down); SetWindowTextA(gHwndP2, buf);
-                        } else if (e->type == EVENT_MOUSE_MOVE) {
-                            SetWindowTextA(gHwndLblP1, "Tọa độ X:");
-                            SetWindowTextA(gHwndLblP2, "Tọa độ Y:");
-                            sprintf(buf, "%d", e->x); SetWindowTextA(gHwndP1, buf);
-                            sprintf(buf, "%d", e->y); SetWindowTextA(gHwndP2, buf);
+                            // Bật chỉnh sửa Bàn Phím, Tắt Chuột
+                            EnableWindow(gHwndKey, TRUE); EnableWindow(gHwndDown, TRUE);
+                            EnableWindow(gHwndX, FALSE); EnableWindow(gHwndY, FALSE);
+                            
+                            sprintf(buf, "%u", e->vk); SetWindowTextA(gHwndKey, buf);
+                            sprintf(buf, "%u", e->down); SetWindowTextA(gHwndDown, buf);
+                            SetWindowTextA(gHwndX, "-"); SetWindowTextA(gHwndY, "-");
                         } else {
-                            SetWindowTextA(gHwndLblP1, "Mouse Flag (Mã nút):");
-                            SetWindowTextA(gHwndLblP2, "Mouse Data:");
-                            sprintf(buf, "%u", e->mouseFlags); SetWindowTextA(gHwndP1, buf);
-                            sprintf(buf, "%d", e->mouseData); SetWindowTextA(gHwndP2, buf);
+                            // Bật chỉnh sửa Chuột, Tắt Bàn Phím
+                            EnableWindow(gHwndX, TRUE); EnableWindow(gHwndY, TRUE);
+                            EnableWindow(gHwndKey, FALSE); EnableWindow(gHwndDown, FALSE);
+                            
+                            sprintf(buf, "%d", e->x); SetWindowTextA(gHwndX, buf);
+                            sprintf(buf, "%d", e->y); SetWindowTextA(gHwndY, buf);
+                            SetWindowTextA(gHwndKey, "-"); SetWindowTextA(gHwndDown, "-");
                         }
                     }
                 }
@@ -374,13 +383,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 if (gSelectedEvent >= 0 && gSelectedEvent < (int)gEventCount) {
                     char buf[64];
                     MacroEvent* e = &gEvents[gSelectedEvent];
-                    GetWindowTextA(gHwndTime, buf, sizeof(buf)); e->timeUs = strtoull(buf, NULL, 10) * 1000ULL;
-                    GetWindowTextA(gHwndP1, buf, sizeof(buf)); int p1 = atoi(buf);
-                    GetWindowTextA(gHwndP2, buf, sizeof(buf)); int p2 = atoi(buf);
-
-                    if (e->type == EVENT_KEY) { e->vk = (uint32_t)p1; e->down = (uint8_t)p2; }
-                    else if (e->type == EVENT_MOUSE_MOVE) { e->x = p1; e->y = p2; }
-                    else { e->mouseFlags = (uint32_t)p1; e->mouseData = p2; }
+                    
+                    GetWindowTextA(gHwndTime, buf, sizeof(buf)); 
+                    e->timeUs = strtoull(buf, NULL, 10) * 1000ULL;
+                    
+                    if (e->type == EVENT_KEY) {
+                        GetWindowTextA(gHwndKey, buf, sizeof(buf)); e->vk = (uint32_t)atoi(buf);
+                        GetWindowTextA(gHwndDown, buf, sizeof(buf)); e->down = (uint8_t)atoi(buf);
+                    } else if (e->type == EVENT_MOUSE_MOVE || e->type == EVENT_MOUSE_BUTTON) {
+                        GetWindowTextA(gHwndX, buf, sizeof(buf)); e->x = atoi(buf);
+                        GetWindowTextA(gHwndY, buf, sizeof(buf)); e->y = atoi(buf);
+                    }
 
                     int prevSel = (int)SendMessage(gHwndList, LB_GETCURSEL, 0, 0);
                     RefreshList();
@@ -395,10 +408,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     gSelectedEvent = -1;
                     RefreshList();
                     SetWindowTextA(gHwndTime, "");
-                    SetWindowTextA(gHwndP1, "");
-                    SetWindowTextA(gHwndP2, "");
-                    SetWindowTextA(gHwndLblP1, "Param 1:");
-                    SetWindowTextA(gHwndLblP2, "Param 2:");
+                    SetWindowTextA(gHwndX, ""); SetWindowTextA(gHwndY, "");
+                    SetWindowTextA(gHwndKey, ""); SetWindowTextA(gHwndDown, "");
                 }
             }
             return 0;
@@ -442,29 +453,44 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassA(&wc);
 
-    gHwndMain = CreateWindowA("MacroGUI", "Macro Editor (JSON Edition)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 700, 560, NULL, NULL, hInstance, NULL);
+    gHwndMain = CreateWindowA("MacroGUI", "Macro Editor (Phiên bản Đơn giản)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 720, 600, NULL, NULL, hInstance, NULL);
 
     gHwndStatus = CreateWindowA("STATIC", "Trạng thái: 🟢 Khởi động xong (IDLE)", WS_CHILD | WS_VISIBLE, 
-        10, 10, 660, 20, gHwndMain, NULL, hInstance, NULL);
+        10, 10, 680, 20, gHwndMain, NULL, hInstance, NULL);
 
     gHwndList = CreateWindowA("LISTBOX", NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_NOTIFY | LBS_HASSTRINGS,
-        10, 40, 420, 460, gHwndMain, (HMENU)1001, hInstance, NULL);
+        10, 40, 420, 500, gHwndMain, (HMENU)1001, hInstance, NULL);
 
-    CreateWindowA("STATIC", "Thời gian chờ (ms):", WS_CHILD | WS_VISIBLE, 450, 40, 190, 20, gHwndMain, NULL, hInstance, NULL);
-    gHwndTime = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 450, 60, 210, 24, gHwndMain, NULL, hInstance, NULL);
+    // ================= KHU VỰC CHỈNH SỬA BÊN PHẢI ================= //
+    int rightX = 440;
+    
+    // Thuộc tính chung
+    CreateWindowA("STATIC", "1. THỜI GIAN TRỄ", WS_CHILD | WS_VISIBLE, rightX, 40, 230, 20, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "Thời gian (mili-giây):", WS_CHILD | WS_VISIBLE, rightX, 60, 230, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndTime = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, rightX, 80, 230, 24, gHwndMain, NULL, hInstance, NULL);
 
-    gHwndLblP1 = CreateWindowA("STATIC", "Thông số 1:", WS_CHILD | WS_VISIBLE, 450, 100, 210, 20, gHwndMain, NULL, hInstance, NULL);
-    gHwndP1 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 450, 120, 210, 24, gHwndMain, NULL, hInstance, NULL);
+    // Thuộc tính Chuột
+    CreateWindowA("STATIC", "2. KHI LÀ LỆNH CHUỘT", WS_CHILD | WS_VISIBLE, rightX, 120, 230, 20, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "Tọa độ X:", WS_CHILD | WS_VISIBLE, rightX, 140, 110, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndX = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, rightX, 160, 110, 24, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "Tọa độ Y:", WS_CHILD | WS_VISIBLE, rightX + 120, 140, 110, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndY = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, rightX + 120, 160, 110, 24, gHwndMain, NULL, hInstance, NULL);
 
-    gHwndLblP2 = CreateWindowA("STATIC", "Thông số 2:", WS_CHILD | WS_VISIBLE, 450, 160, 210, 20, gHwndMain, NULL, hInstance, NULL);
-    gHwndP2 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 450, 180, 210, 24, gHwndMain, NULL, hInstance, NULL);
+    // Thuộc tính Phím
+    CreateWindowA("STATIC", "3. KHI LÀ LỆNH BÀN PHÍM", WS_CHILD | WS_VISIBLE, rightX, 200, 230, 20, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "Mã phím (Ví dụ 65=A, 13=Enter):", WS_CHILD | WS_VISIBLE, rightX, 220, 230, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndKey = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, rightX, 240, 230, 24, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "Hành động (1 = Nhấn, 0 = Nhả):", WS_CHILD | WS_VISIBLE, rightX, 270, 230, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndDown = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, rightX, 290, 230, 24, gHwndMain, NULL, hInstance, NULL);
 
-    gHwndUpdate = CreateWindowA("BUTTON", "Lưu thay đổi dòng này", WS_CHILD | WS_VISIBLE, 450, 220, 210, 35, gHwndMain, (HMENU)1005, hInstance, NULL);
-    gHwndDelete = CreateWindowA("BUTTON", "Xóa dòng này", WS_CHILD | WS_VISIBLE, 450, 265, 210, 35, gHwndMain, (HMENU)1006, hInstance, NULL);
+    // Nút Lưu/Xóa
+    gHwndUpdate = CreateWindowA("BUTTON", "Lưu thay đổi dòng này", WS_CHILD | WS_VISIBLE, rightX, 330, 230, 35, gHwndMain, (HMENU)1005, hInstance, NULL);
+    gHwndDelete = CreateWindowA("BUTTON", "Xóa dòng này khỏi danh sách", WS_CHILD | WS_VISIBLE, rightX, 375, 230, 35, gHwndMain, (HMENU)1006, hInstance, NULL);
 
-    CreateWindowA("STATIC", "--- PHÍM TẮT TRÊN BÀN PHÍM ---\n\nF1: Bắt đầu ghi\nF2: Dừng ghi\nF3: Chạy macro\nF4: Dừng chạy\nF5: Lưu file macro.json\nF6: Mở file macro.json", 
-        WS_CHILD | WS_VISIBLE, 450, 330, 210, 160, gHwndMain, NULL, hInstance, NULL);
+    // Hướng dẫn
+    CreateWindowA("STATIC", "--- PHÍM TẮT ĐIỀU KHIỂN ---\n\nF1: Ghi lén    F2: Dừng ghi\nF3: Phát       F4: Dừng phát\n\nF5: Lưu json   F6: Mở json", 
+        WS_CHILD | WS_VISIBLE, rightX, 430, 230, 100, gHwndMain, NULL, hInstance, NULL);
 
     HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     EnumChildWindows(gHwndMain, SetFontProc, (LPARAM)hFont);
