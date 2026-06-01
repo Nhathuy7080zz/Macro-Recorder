@@ -1,6 +1,0 @@
-*.exe
-*.bin
-*.obj
-.vscode/
-.gitignore
-*.log
