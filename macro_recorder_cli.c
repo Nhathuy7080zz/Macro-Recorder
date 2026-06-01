@@ -1,15 +1,11 @@
-#define WIN32_LEAN_AND_MEAN
+﻿#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #pragma pack(push, 1)
-typedef struct {
-    char magic[4];
-    uint32_t version;
-    uint32_t count;
-} MacroHeader;
 
 typedef struct {
     uint64_t timeUs;
@@ -20,7 +16,7 @@ typedef struct {
     int32_t y;
     uint8_t type;
     uint8_t down;
-    uint16_t reserved;
+
 } MacroEvent;
 #pragma pack(pop)
 
@@ -141,24 +137,26 @@ static void start_recording(void) {
 }
 
 static int save_macro(const char* path) {
-    FILE* file = fopen(path, "wb");
-    if (!file) {
-        return 0;
+    FILE* file = fopen(path, "w");
+    if (!file) return 0;
+    
+    fprintf(file, "[\n");
+    for (size_t i = 0; i < gEventCount; ++i) {
+        MacroEvent* e = &gEvents[i];
+        fprintf(file, "  {\n");
+        fprintf(file, "    \"timeUs\": %llu,\n", (unsigned long long)e->timeUs);
+        fprintf(file, "    \"type\": %u,\n", e->type);
+        fprintf(file, "    \"vk\": %u,\n", e->vk);
+        fprintf(file, "    \"mouseFlags\": %u,\n", e->mouseFlags);
+        fprintf(file, "    \"mouseData\": %d,\n", e->mouseData);
+        fprintf(file, "    \"x\": %d,\n", e->x);
+        fprintf(file, "    \"y\": %d,\n", e->y);
+        fprintf(file, "    \"down\": %u\n", e->down);
+        fprintf(file, "  }%s\n", (i == gEventCount - 1) ? "" : ",");
     }
-
-    MacroHeader header;
-    header.magic[0] = 'M';
-    header.magic[1] = 'C';
-    header.magic[2] = 'R';
-    header.magic[3] = '1';
-    header.version = 1;
-    header.count = (uint32_t)gEventCount;
-
-    int ok = fwrite(&header, sizeof(header), 1, file) == 1 &&
-             (gEventCount == 0 || fwrite(gEvents, sizeof(MacroEvent), gEventCount, file) == gEventCount);
-
+    fprintf(file, "]\n");
     fclose(file);
-    return ok;
+    return 1;
 }
 
 static int load_macro(const char* path) {
@@ -167,43 +165,45 @@ static int load_macro(const char* path) {
         return 0;
     }
 
-    FILE* file = fopen(path, "rb");
-    if (!file) {
-        return 0;
-    }
+    FILE* file = fopen(path, "r");
+    if (!file) return 0;
 
-    MacroHeader header;
-    if (fread(&header, sizeof(header), 1, file) != 1) {
-        fclose(file);
-        return 0;
-    }
+    fseek(file, 0, SEEK_END);
+    long len = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (len <= 0) { fclose(file); return 0; }
 
-    if (header.magic[0] != 'M' || header.magic[1] != 'C' || header.magic[2] != 'R' || header.magic[3] != '1' || header.version != 1) {
-        fclose(file);
-        return 0;
-    }
-
-    MacroEvent* loaded = NULL;
-    if (header.count > 0) {
-        loaded = (MacroEvent*)malloc((size_t)header.count * sizeof(MacroEvent));
-        if (!loaded) {
-            fclose(file);
-            return 0;
-        }
-
-        if (fread(loaded, sizeof(MacroEvent), header.count, file) != header.count) {
-            free(loaded);
-            fclose(file);
-            return 0;
-        }
-    }
-
+    char* buf = (char*)malloc(len + 1);
+    if (!buf) { fclose(file); return 0; }
+    fread(buf, 1, len, file);
+    buf[len] = '\0';
     fclose(file);
+
     clear_events();
-    gEvents = loaded;
-    gEventCount = header.count;
-    gEventCapacity = header.count;
-    printf("Loaded %u events from %s\n", header.count, path);
+
+    char* ptr = buf;
+    while ((ptr = strstr(ptr, "{")) != NULL) {
+        char* end = strstr(ptr, "}");
+        if (!end) break;
+        *end = '\0';
+
+        MacroEvent e; ZeroMemory(&e, sizeof(e));
+        char* p;
+        if ((p = strstr(ptr, "\"timeUs\""))) { p = strchr(p, ':'); if (p) e.timeUs = strtoull(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"type\""))) { p = strchr(p, ':'); if (p) e.type = (uint8_t)strtoul(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"vk\""))) { p = strchr(p, ':'); if (p) e.vk = (uint32_t)strtoul(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"mouseFlags\""))) { p = strchr(p, ':'); if (p) e.mouseFlags = (uint32_t)strtoul(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"mouseData\""))) { p = strchr(p, ':'); if (p) e.mouseData = (int32_t)strtol(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"x\""))) { p = strchr(p, ':'); if (p) e.x = (int32_t)strtol(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"y\""))) { p = strchr(p, ':'); if (p) e.y = (int32_t)strtol(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"down\""))) { p = strchr(p, ':'); if (p) e.down = (uint8_t)strtoul(p+1, NULL, 10); }
+        append_event(&e);
+        *end = '}';
+        ptr = end + 1;
+    }
+    
+    free(buf);
+    printf("Loaded %zu events from %s\n", gEventCount, path);
     return 1;
 }
 
@@ -389,8 +389,8 @@ static void print_help(void) {
     printf("F2: stop recording\n");
     printf("F3: play loaded/current macro\n");
     printf("F4: stop playback\n");
-    printf("F5: save macro.bin\n");
-    printf("F6: load macro.bin\n");
+    printf("F5: save macro.json\n");
+    printf("F6: load macro.json\n");
     printf("Events are captured globally on this machine.\n");
 }
 
@@ -422,15 +422,15 @@ int main(void) {
                     stop_playback();
                     break;
                 case 5:
-                    if (save_macro("macro.bin")) {
-                        printf("Saved macro.bin (%zu events).\n", gEventCount);
+                    if (save_macro("macro.json")) {
+                        printf("Saved macro.json (%zu events).\n", gEventCount);
                     } else {
-                        printf("Failed to save macro.bin.\n");
+                        printf("Failed to save macro.json.\n");
                     }
                     break;
                 case 6:
-                    if (!load_macro("macro.bin")) {
-                        printf("Failed to load macro.bin.\n");
+                    if (!load_macro("macro.json")) {
+                        printf("Failed to load macro.json.\n");
                     }
                     break;
                 default:
