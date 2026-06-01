@@ -1,10 +1,14 @@
-﻿#define WIN32_LEAN_AND_MEAN
+﻿#define UNICODE
+#define _UNICODE
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commdlg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h> 
+#pragma comment(linker, "/SUBSYSTEM:windows")
 
 #pragma pack(push, 1)
 typedef struct {
@@ -36,6 +40,7 @@ static LARGE_INTEGER gQpcFreq;
 
 int gLang = 1; // 1 = VI, 0 = EN
 HFONT gFont = NULL;
+int gLoopCount = 1; // Mặc định chạy 1 lần
 
 // Control IDs
 #define IDC_LIST 1001
@@ -52,16 +57,19 @@ HFONT gFont = NULL;
 #define IDC_BTN_LANG 1012
 #define IDC_LBL_HELP 1013
 #define IDC_STATUS 1014
+#define IDC_LBL_LOOP 1015
+#define IDC_TXT_LOOP 1016
 
 HWND gHwndMain, gHwndList, gHwndStatus, gHwndHelp;
 HWND gHwndLblDelay, gHwndTxtDelay, gHwndLblVal1, gHwndTxtVal1, gHwndLblVal2, gHwndTxtVal2;
 HWND gHwndBtnSave, gHwndBtnDel, gHwndBtnExport, gHwndBtnImport, gHwndBtnLang;
+HWND gHwndLblLoop, gHwndTxtLoop;
 int gSelectedEvent = -1;
 
 static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM wParam, LPARAM lParam);
 static LRESULT CALLBACK mouse_hook_proc(int code, WPARAM wParam, LPARAM lParam);
 
-static const char* L(const char* en, const char* vi) { return gLang ? vi : en; }
+static const wchar_t* L_str(const wchar_t* en, const wchar_t* vi) { return gLang ? vi : en; }
 
 static uint64_t now_us(void) {
     LARGE_INTEGER counter; QueryPerformanceCounter(&counter);
@@ -90,45 +98,45 @@ static void stop_playback(void) { InterlockedExchange(&gStopPlayback, 1); }
 
 void RefreshList(void) {
     SendMessage(gHwndList, LB_RESETCONTENT, 0, 0);
-    char buf[512], keyName[64];
+    wchar_t buf[512], keyName[64];
     for (size_t i = 0; i < gEventCount; ++i) {
         MacroEvent* e = &gEvents[i];
         unsigned long long tMs = (unsigned long long)(e->timeUs / 1000ULL);
-        char actStr[64];
         if (e->type == EVENT_KEY) {
-            UINT scan = MapVirtualKeyA(e->vk, MAPVK_VK_TO_VSC);
-            if (scan == 0 || GetKeyNameTextA(scan << 16, keyName, sizeof(keyName)) == 0) sprintf(keyName, "Key %u", e->vk);
-            sprintf(actStr, "%.20s | %s", keyName, e->down ? L("- Press", "\xe2\x86\x93 Nh\xef\xbf\xbdn") : L("^ Key Up", "\xe2\x86\x91 Nh\xef\xbf\xbd"));
-            sprintf(buf, "[%zu] %s | %llu ms", i, actStr, tMs);
+            UINT scan = MapVirtualKeyW(e->vk, MAPVK_VK_TO_VSC);
+            if (scan == 0 || GetKeyNameTextW(scan << 16, keyName, sizeof(keyName)/sizeof(wchar_t)) == 0) swprintf(keyName, 64, L"Key %u", e->vk);
+            swprintf(buf, 512, L"[%zu] %.20s | %s | %llu ms", i, keyName, e->down ? L_str(L"- Press", L"\x2193 Nhấn") : L_str(L"^ Key Up", L"\x2191 Nhả"), tMs);
         } else if (e->type == EVENT_MOUSE_MOVE) {
-            sprintf(buf, "[%zu] %s (X:%d Y:%d) | %llu ms", i, L("Mouse Move", "Di chu\xee\xbd\xbf\xbdn chu\xee\xbd\xbf\xbd"), e->x, e->y, tMs);
+            swprintf(buf, 512, L"[%zu] %s (X:%d Y:%d) | %llu ms", i, L_str(L"Mouse Move", L"Di chuyển chuột"), e->x, e->y, tMs);
         } else if (e->type == EVENT_MOUSE_BUTTON) {
-            const char* btn = L("Mouse Click", "Click chu\xee\xbd\xbf\xbd");
-            if (e->mouseFlags & MOUSEEVENTF_LEFTDOWN) btn = L("Left \xe2\x86\x93", "Tr\xef\xbf\xbd \xe2\x86\x93");
-            else if (e->mouseFlags & MOUSEEVENTF_LEFTUP) btn = L("Left \xe2\x86\x91", "Tr\xef\xbf\xbd \xe2\x86\x91");
-            else if (e->mouseFlags & MOUSEEVENTF_RIGHTDOWN) btn = L("Right \xe2\x86\x93", "Ph\xef\xbf\xbd \xe2\x86\x93");
-            else if (e->mouseFlags & MOUSEEVENTF_RIGHTUP) btn = L("Right \xe2\x86\x91", "Ph\xef\xbf\xbd \xe2\x86\x91");
-            sprintf(buf, "[%zu] %s (X:%d Y:%d) | %llu ms", i, btn, e->x, e->y, tMs);
+            const wchar_t* btn = L_str(L"Mouse Click", L"Click chuột");
+            if (e->mouseFlags & MOUSEEVENTF_LEFTDOWN) btn = L_str(L"Left \x2193", L"Trái \x2193");
+            else if (e->mouseFlags & MOUSEEVENTF_LEFTUP) btn = L_str(L"Left \x2191", L"Trái \x2191");
+            else if (e->mouseFlags & MOUSEEVENTF_RIGHTDOWN) btn = L_str(L"Right \x2193", L"Phải \x2193");
+            else if (e->mouseFlags & MOUSEEVENTF_RIGHTUP) btn = L_str(L"Right \x2191", L"Phải \x2191");
+            swprintf(buf, 512, L"[%zu] %s (X:%d Y:%d) | %llu ms", i, btn, e->x, e->y, tMs);
         } else if (e->type == EVENT_MOUSE_WHEEL) {
-            sprintf(buf, "[%zu] %s | %llu ms", i, L("Mouse Wheel", "Cu\xee\xbd\xbf\xbdn chu\xee\xbd\xbf\xbd"), tMs);
+            swprintf(buf, 512, L"[%zu] %s | %llu ms", i, L_str(L"Mouse Wheel", L"Cuộn chuột"), tMs);
         }
-        LRESULT idx = SendMessageA(gHwndList, LB_ADDSTRING, 0, (LPARAM)buf);
+        LRESULT idx = SendMessageW(gHwndList, LB_ADDSTRING, 0, (LPARAM)buf);
         SendMessage(gHwndList, LB_SETITEMDATA, idx, (LPARAM)i);
     }
 }
 
 static void UpdateUIStrings() {
-    SetWindowTextA(gHwndMain, L("Macro Editor", "Tr\xef\xbf\xbdnh ch\xef\xbf\xbdnh s\xef\xbf\xbd Macro"));
-    SetWindowTextA(gHwndLblDelay, L("Delay (ms):", "Th\xef\xbf\xbd gian tr\xef\xbf\xbd (ms):"));
-    SetWindowTextA(gHwndBtnSave, L("Save Changes", "L\xef\xbf\xbd thay \xef\xbf\xbd\xef\xbf\xbd"));
-    SetWindowTextA(gHwndBtnDel, L("Delete Action", "X\xef\xbf\xbd h\xef\xbf\xbdnh \xef\xbf\xbd\xef\xbf\xbdng"));
-    SetWindowTextA(gHwndBtnExport, L("Export JSON", "Xu\xef\xbf\xbd file JSON"));
-    SetWindowTextA(gHwndBtnImport, L("Import JSON", "Nh\xef\xbf\xbdp file JSON"));
-    SetWindowTextA(gHwndBtnLang, L("EN / \xef\xbf\xbd", "VI / EN"));
-    SetWindowTextA(gHwndHelp, L("Hotkeys:\nF1: Record   F2: Stop Rec\nF3: Play     F4: Stop Play", "Ph\xef\xbf\xbd t\xef\xbf\xbd:\nF1: Ghi l\xef\xbf\xbdn   F2: D\xef\xbf\xbdng ghi\nF3: Ph\xef\xbf\xbd     F4: D\xef\xbf\xbdng ph\xef\xbf\xbd"));
-    if(gRecording) SetWindowTextA(gHwndStatus, L("Status: RECORDING (F2 to Stop)", "Tr\xef\xbf\xbdng th\xef\xbf\xbd: \xef\xbf\xbdNG GHI (F2 \xef\xbf\xbd d\xef\xbf\xbdng)"));
-    else if(gPlaying) SetWindowTextA(gHwndStatus, L("Status: PLAYING (F4 to Stop)", "Tr\xef\xbf\xbdng th\xef\xbf\xbd: \xef\xbf\xbdNG PH\xef\xbf\xbd (F4 \xef\xbf\xbd d\xef\xbf\xbdng)"));
-    else SetWindowTextA(gHwndStatus, L("Status: IDLE", "Tr\xef\xbf\xbdng th\xef\xbf\xbd: S\xef\xbf\xbdn s\xef\xbf\xbdng (IDLE)"));
+    SetWindowTextW(gHwndMain, L_str(L"Macro Editor", L"Trình chỉnh sửa Macro"));
+    SetWindowTextW(gHwndLblDelay, L_str(L"Delay (ms):", L"Thời gian trễ (ms):"));
+    SetWindowTextW(gHwndBtnSave, L_str(L"Save Changes", L"Lưu thay đổi"));
+    SetWindowTextW(gHwndBtnDel, L_str(L"Delete Action", L"Xóa hành động"));
+    SetWindowTextW(gHwndBtnExport, L_str(L"Export JSON", L"Xuất JSON"));
+    SetWindowTextW(gHwndBtnImport, L_str(L"Import JSON", L"Nhập JSON"));
+    SetWindowTextW(gHwndBtnLang, L_str(L"EN / VI", L"VI / EN"));
+    SetWindowTextW(gHwndLblLoop, L_str(L"Loop (0 = Infinite):", L"Số lần lặp (0 = Vô hạn):"));
+    SetWindowTextW(gHwndHelp, L_str(L"Hotkeys:\nF1: Record   F2: Stop Rec\nF3: Play     F4: Stop Play", L"Phím tắt:\nF1: Ghi lệnh   F2: Dừng ghi\nF3: Phát       F4: Dừng phát"));
+    
+    if(gRecording) SetWindowTextW(gHwndStatus, L_str(L"Status: RECORDING (F2 to Stop)", L"Trạng thái: ĐANG GHI (F2 để dừng)"));
+    else if(gPlaying) SetWindowTextW(gHwndStatus, L_str(L"Status: PLAYING (F4 to Stop)", L"Trạng thái: ĐANG PHÁT (F4 để dừng)"));
+    else SetWindowTextW(gHwndStatus, L_str(L"Status: IDLE", L"Trạng thái: Sẵn sàng"));
     RefreshList();
 }
 
@@ -146,35 +154,35 @@ static void start_recording(void) {
     }
     stop_playback(); clear_events(); RefreshList();
     gRecordStartUs = now_us(); gHasLastMove = 0;
-    gKeyboardHook = SetWindowsHookExA(WH_KEYBOARD_LL, keyboard_hook_proc, GetModuleHandleA(NULL), 0);
-    gMouseHook = SetWindowsHookExA(WH_MOUSE_LL, mouse_hook_proc, GetModuleHandleA(NULL), 0);
+    gKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, keyboard_hook_proc, GetModuleHandle(NULL), 0);
+    gMouseHook = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook_proc, GetModuleHandle(NULL), 0);
     UpdateUIStrings();
 }
 
-static int open_file_dialog(char* outPath) {
-    OPENFILENAMEA ofn; ZeroMemory(&ofn, sizeof(ofn));
+static int open_file_dialog(wchar_t* outPath) {
+    OPENFILENAMEW ofn; ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = gHwndMain;
-    ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
-    ofn.lpstrFile = outPath; outPath[0] = '\0';
+    ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
+    ofn.lpstrFile = outPath; outPath[0] = L'\0';
     ofn.nMaxFile = 260;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-    return GetOpenFileNameA(&ofn);
+    return GetOpenFileNameW(&ofn);
 }
-static int save_file_dialog(char* outPath) {
-    OPENFILENAMEA ofn; ZeroMemory(&ofn, sizeof(ofn));
+static int save_file_dialog(wchar_t* outPath) {
+    OPENFILENAMEW ofn; ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = gHwndMain;
-    ofn.lpstrFilter = "JSON Files\0*.json\0All Files\0*.*\0";
-    ofn.lpstrFile = outPath; outPath[0] = '\0';
+    ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
+    ofn.lpstrFile = outPath; outPath[0] = L'\0';
     ofn.nMaxFile = 260;
-    ofn.lpstrDefExt = "json";
+    ofn.lpstrDefExt = L"json";
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    return GetSaveFileNameA(&ofn);
+    return GetSaveFileNameW(&ofn);
 }
 
-static int save_macro(const char* path) {
-    FILE* file = fopen(path, "w"); if (!file) return 0;
+static int save_macro(const wchar_t* path) {
+    FILE* file = _wfopen(path, L"w"); if (!file) return 0;
     fprintf(file, "[\n");
     for (size_t i = 0; i < gEventCount; ++i) {
         MacroEvent* e = &gEvents[i];
@@ -183,9 +191,9 @@ static int save_macro(const char* path) {
     }
     fprintf(file, "]\n"); fclose(file); return 1;
 }
-static int load_macro(const char* path) {
+static int load_macro(const wchar_t* path) {
     if (InterlockedCompareExchange(&gRecording, 0, 0) != 0 || InterlockedCompareExchange(&gPlaying, 0, 0) != 0) return 0;
-    FILE* file = fopen(path, "r"); if (!file) return 0;
+    FILE* file = _wfopen(path, L"r"); if (!file) return 0;
     fseek(file, 0, SEEK_END); long len = ftell(file); fseek(file, 0, SEEK_SET);
     if (len <= 0) { fclose(file); return 0; }
     char* buf = (char*)malloc(len + 1);
@@ -217,7 +225,7 @@ static void send_mouse_button(DWORD flags, int x, int y, DWORD data) {
 static void send_key(uint32_t vk, DWORD flags) {
     INPUT input; ZeroMemory(&input, sizeof(input));
     input.type = INPUT_KEYBOARD; input.ki.wVk = (WORD)vk;
-    input.ki.wScan = (WORD)MapVirtualKeyA((UINT)vk, MAPVK_VK_TO_VSC);
+    input.ki.wScan = (WORD)MapVirtualKeyW((UINT)vk, MAPVK_VK_TO_VSC);
     input.ki.dwFlags = flags; SendInput(1, &input, sizeof(input));
 }
 
@@ -225,26 +233,42 @@ static DWORD WINAPI playback_thread(LPVOID unused) {
     (void)unused;
     if (gEventCount == 0) { InterlockedExchange(&gPlaying, 0); return 0; }
     InterlockedExchange(&gStopPlayback, 0);
-    uint64_t playStartUs = now_us();
-    for (size_t i = 0; i < gEventCount; ++i) {
+    
+    int currentLoop = 0;
+    while (gLoopCount == 0 || currentLoop < gLoopCount) {
         if (InterlockedCompareExchange(&gStopPlayback, 0, 0) != 0) break;
-        const MacroEvent* event = &gEvents[i];
-        sleep_until_us(playStartUs + event->timeUs);
-        if (InterlockedCompareExchange(&gStopPlayback, 0, 0) != 0) break;
-        switch (event->type) {
-            case EVENT_KEY: send_key(event->vk, event->down ? 0 : KEYEVENTF_KEYUP); break;
-            case EVENT_MOUSE_MOVE: SetCursorPos(event->x, event->y); break;
-            case EVENT_MOUSE_BUTTON: SetCursorPos(event->x, event->y); send_mouse_button(event->mouseFlags, event->x, event->y, (DWORD)event->mouseData); break;
-            case EVENT_MOUSE_WHEEL: SetCursorPos(event->x, event->y); send_mouse_button(event->mouseFlags, event->x, event->y, (DWORD)event->mouseData); break;
+        uint64_t playStartUs = now_us();
+        
+        for (size_t i = 0; i < gEventCount; ++i) {
+            if (InterlockedCompareExchange(&gStopPlayback, 0, 0) != 0) break;
+            const MacroEvent* event = &gEvents[i];
+            sleep_until_us(playStartUs + event->timeUs);
+            if (InterlockedCompareExchange(&gStopPlayback, 0, 0) != 0) break;
+            
+            switch (event->type) {
+                case EVENT_KEY: send_key(event->vk, event->down ? 0 : KEYEVENTF_KEYUP); break;
+                case EVENT_MOUSE_MOVE: SetCursorPos(event->x, event->y); break;
+                case EVENT_MOUSE_BUTTON: SetCursorPos(event->x, event->y); send_mouse_button(event->mouseFlags, event->x, event->y, (DWORD)event->mouseData); break;
+                case EVENT_MOUSE_WHEEL: SetCursorPos(event->x, event->y); send_mouse_button(event->mouseFlags, event->x, event->y, (DWORD)event->mouseData); break;
+            }
         }
+        currentLoop++;
     }
+    
     InterlockedExchange(&gPlaying, 0);
-    PostMessage(gHwndMain, WM_APP + 1, 0, 0); // trigger UI update
+    PostMessage(gHwndMain, WM_APP + 1, 0, 0); // Trigger UI update
     return 0;
 }
+
 static void start_playback(void) {
     if (InterlockedCompareExchange(&gPlaying, 1, 0) != 0) return;
     stop_recording(); InterlockedExchange(&gStopPlayback, 0);
+    
+    wchar_t buf[64];
+    GetWindowTextW(gHwndTxtLoop, buf, 64);
+    gLoopCount = _wtoi(buf);
+    if (gLoopCount < 0) gLoopCount = 1;
+
     UpdateUIStrings();
     HANDLE thread = CreateThread(NULL, 0, playback_thread, NULL, 0, NULL);
     if (!thread) InterlockedExchange(&gPlaying, 0);
@@ -266,6 +290,7 @@ static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM wParam, LPARAM lPara
     }
     return CallNextHookEx(gKeyboardHook, code, wParam, lParam);
 }
+
 static LRESULT CALLBACK mouse_hook_proc(int code, WPARAM wParam, LPARAM lParam) {
     if (code == HC_ACTION && InterlockedCompareExchange(&gRecording, 0, 0) != 0) {
         const MSLLHOOKSTRUCT* data = (const MSLLHOOKSTRUCT*)lParam;
@@ -306,46 +331,67 @@ BOOL CALLBACK SetFontProc(HWND hwnd, LPARAM lParam) { SendMessage(hwnd, WM_SETFO
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE:
-            gFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
-            if (!gFont) gFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Tahoma");
-            gHwndStatus = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
-            gHwndList = CreateWindowA("LISTBOX", NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_NOTIFY | LBS_HASSTRINGS, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST, NULL, NULL);
-            gHwndLblDelay = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_DELAY, NULL, NULL);
-            gHwndTxtDelay = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_DELAY, NULL, NULL);
-            gHwndLblVal1 = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_VAL1, NULL, NULL);
-            gHwndTxtVal1 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_VAL1, NULL, NULL);
-            gHwndLblVal2 = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_VAL2, NULL, NULL);
-            gHwndTxtVal2 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_VAL2, NULL, NULL);
-            gHwndBtnSave = CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE, NULL, NULL);
-            gHwndBtnDel = CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_DEL, NULL, NULL);
-            gHwndBtnExport = CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT, NULL, NULL);
-            gHwndBtnImport = CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_IMPORT, NULL, NULL);
-            gHwndBtnLang = CreateWindowA("BUTTON", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LANG, NULL, NULL);
-            gHwndHelp = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_HELP, NULL, NULL);
+            gFont = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            
+            gHwndStatus = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_STATUS, NULL, NULL);
+            gHwndList = CreateWindowW(L"LISTBOX", NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_NOTIFY | LBS_HASSTRINGS, 0, 0, 0, 0, hwnd, (HMENU)IDC_LIST, NULL, NULL);
+            
+            // Loop controls
+            gHwndLblLoop = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_LOOP, NULL, NULL);
+            gHwndTxtLoop = CreateWindowW(L"EDIT", L"1", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_LOOP, NULL, NULL);
+
+            // Edit controls
+            gHwndLblDelay = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_DELAY, NULL, NULL);
+            gHwndTxtDelay = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_DELAY, NULL, NULL);
+            gHwndLblVal1 = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_VAL1, NULL, NULL);
+            gHwndTxtVal1 = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_VAL1, NULL, NULL);
+            gHwndLblVal2 = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_VAL2, NULL, NULL);
+            gHwndTxtVal2 = CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER, 0, 0, 0, 0, hwnd, (HMENU)IDC_TXT_VAL2, NULL, NULL);
+            
+            // Buttons
+            gHwndBtnSave = CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_SAVE, NULL, NULL);
+            gHwndBtnDel = CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_DEL, NULL, NULL);
+            gHwndBtnExport = CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_EXPORT, NULL, NULL);
+            gHwndBtnImport = CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_IMPORT, NULL, NULL);
+            gHwndBtnLang = CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_BTN_LANG, NULL, NULL);
+            gHwndHelp = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd, (HMENU)IDC_LBL_HELP, NULL, NULL);
+            
             EnumChildWindows(hwnd, SetFontProc, (LPARAM)gFont);
             UpdateUIStrings();
             break;
             
         case WM_SIZE: {
             int w = LOWORD(lParam), h = HIWORD(lParam);
-            int rW = 220; // right panel width
-            int m = 10;   // margin
+            int rW = 220; 
+            int m = 10;   
             int lW = w - rW - m * 3;
             if (lW < 200) lW = 200;
+
             MoveWindow(gHwndStatus, m, m, w - m*2, 20, TRUE);
             MoveWindow(gHwndList, m, 35, lW, h - 45, TRUE);
+            
             int rx = m*2 + lW, ry = 35;
+            
+            // Loop section
+            MoveWindow(gHwndLblLoop, rx, ry, rW, 20, TRUE); ry += 20;
+            MoveWindow(gHwndTxtLoop, rx, ry, rW, 24, TRUE); ry += 35;
+
+            // Edit section
             MoveWindow(gHwndLblDelay, rx, ry, rW, 20, TRUE); ry += 20;
             MoveWindow(gHwndTxtDelay, rx, ry, rW, 24, TRUE); ry += 30;
             MoveWindow(gHwndLblVal1, rx, ry, rW/2 - 5, 20, TRUE);
             MoveWindow(gHwndLblVal2, rx + rW/2 + 5, ry, rW/2 - 5, 20, TRUE); ry += 20;
             MoveWindow(gHwndTxtVal1, rx, ry, rW/2 - 5, 24, TRUE);
-            MoveWindow(gHwndTxtVal2, rx + rW/2 + 5, ry, rW/2 - 5, 24, TRUE); ry += 30;
+            MoveWindow(gHwndTxtVal2, rx + rW/2 + 5, ry, rW/2 - 5, 24, TRUE); ry += 35;
+            
+            // Action buttons
             MoveWindow(gHwndBtnSave, rx, ry, rW, 30, TRUE); ry += 35;
             MoveWindow(gHwndBtnDel, rx, ry, rW, 30, TRUE); ry += 45;
             MoveWindow(gHwndBtnExport, rx, ry, rW/2 - 5, 30, TRUE);
             MoveWindow(gHwndBtnImport, rx + rW/2 + 5, ry, rW/2 - 5, 30, TRUE); ry += 35;
             MoveWindow(gHwndBtnLang, rx, ry, rW, 30, TRUE); ry += 40;
+            
+            // Help
             MoveWindow(gHwndHelp, rx, ry, rW, 60, TRUE);
             break;
         }
@@ -356,17 +402,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     gSelectedEvent = (int)SendMessage(gHwndList, LB_GETITEMDATA, sel, 0);
                     if (gSelectedEvent >= 0 && gSelectedEvent < (int)gEventCount) {
                         MacroEvent* e = &gEvents[gSelectedEvent];
-                        char buf[64]; sprintf(buf, "%llu", (unsigned long long)(e->timeUs / 1000ULL)); 
-                        SetWindowTextA(gHwndTxtDelay, buf);
+                        wchar_t buf[64]; swprintf(buf, 64, L"%llu", (unsigned long long)(e->timeUs / 1000ULL)); 
+                        SetWindowTextW(gHwndTxtDelay, buf);
                         if (e->type == EVENT_KEY) {
-                            SetWindowTextA(gHwndLblVal1, L("Key Code:", "M\xef\xbf\xbd ph\xef\xbf\xbd:"));
-                            SetWindowTextA(gHwndLblVal2, L("State (1=Dn):", "H. \xef\xbf\xbd\xef\xbf\xbdng (1=Nh\xef\xbf\xbdn):"));
-                            sprintf(buf, "%u", e->vk); SetWindowTextA(gHwndTxtVal1, buf);
-                            sprintf(buf, "%u", e->down); SetWindowTextA(gHwndTxtVal2, buf);
+                            SetWindowTextW(gHwndLblVal1, L_str(L"Key Code:", L"Mã phím:"));
+                            SetWindowTextW(gHwndLblVal2, L_str(L"State(1=Dn):", L"Tr.thái (1=Nhấn):"));
+                            swprintf(buf, 64, L"%u", e->vk); SetWindowTextW(gHwndTxtVal1, buf);
+                            swprintf(buf, 64, L"%u", e->down); SetWindowTextW(gHwndTxtVal2, buf);
                         } else {
-                            SetWindowTextA(gHwndLblVal1, "X:"); SetWindowTextA(gHwndLblVal2, "Y:");
-                            sprintf(buf, "%d", e->x); SetWindowTextA(gHwndTxtVal1, buf);
-                            sprintf(buf, "%d", e->y); SetWindowTextA(gHwndTxtVal2, buf);
+                            SetWindowTextW(gHwndLblVal1, L"X:"); SetWindowTextW(gHwndLblVal2, L"Y:");
+                            swprintf(buf, 64, L"%d", e->x); SetWindowTextW(gHwndTxtVal1, buf);
+                            swprintf(buf, 64, L"%d", e->y); SetWindowTextW(gHwndTxtVal2, buf);
                         }
                     }
                 }
@@ -374,14 +420,14 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 gLang = !gLang; UpdateUIStrings();
             } else if (LOWORD(wParam) == IDC_BTN_SAVE) {
                 if (gSelectedEvent >= 0 && gSelectedEvent < (int)gEventCount) {
-                    char buf[64]; MacroEvent* e = &gEvents[gSelectedEvent];
-                    GetWindowTextA(gHwndTxtDelay, buf, sizeof(buf)); e->timeUs = strtoull(buf, NULL, 10) * 1000ULL;
+                    wchar_t buf[64]; MacroEvent* e = &gEvents[gSelectedEvent];
+                    GetWindowTextW(gHwndTxtDelay, buf, 64); e->timeUs = wcstoull(buf, NULL, 10) * 1000ULL;
                     if (e->type == EVENT_KEY) {
-                        GetWindowTextA(gHwndTxtVal1, buf, sizeof(buf)); e->vk = (uint32_t)atoi(buf);
-                        GetWindowTextA(gHwndTxtVal2, buf, sizeof(buf)); e->down = (uint8_t)atoi(buf);
+                        GetWindowTextW(gHwndTxtVal1, buf, 64); e->vk = (uint32_t)_wtoi(buf);
+                        GetWindowTextW(gHwndTxtVal2, buf, 64); e->down = (uint8_t)_wtoi(buf);
                     } else if (e->type == EVENT_MOUSE_MOVE || e->type == EVENT_MOUSE_BUTTON) {
-                        GetWindowTextA(gHwndTxtVal1, buf, sizeof(buf)); e->x = atoi(buf);
-                        GetWindowTextA(gHwndTxtVal2, buf, sizeof(buf)); e->y = atoi(buf);
+                        GetWindowTextW(gHwndTxtVal1, buf, 64); e->x = _wtoi(buf);
+                        GetWindowTextW(gHwndTxtVal2, buf, 64); e->y = _wtoi(buf);
                     }
                     int prevSel = (int)SendMessage(gHwndList, LB_GETCURSEL, 0, 0);
                     RefreshList(); SendMessage(gHwndList, LB_SETCURSEL, prevSel, 0);
@@ -392,9 +438,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     gEventCount--; gSelectedEvent = -1; RefreshList();
                 }
             } else if (LOWORD(wParam) == IDC_BTN_EXPORT) {
-                char path[260]; if (save_file_dialog(path)) save_macro(path);
+                wchar_t path[260]; if (save_file_dialog(path)) save_macro(path);
             } else if (LOWORD(wParam) == IDC_BTN_IMPORT) {
-                char path[260]; if (open_file_dialog(path)) load_macro(path);
+                wchar_t path[260]; if (open_file_dialog(path)) load_macro(path);
             }
             return 0;
         
@@ -406,7 +452,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case 4: stop_playback(); UpdateUIStrings(); break;
             } return 0;
             
-        case WM_APP + 1: UpdateUIStrings(); return 0; // Playback finished
+        case WM_APP + 1: UpdateUIStrings(); return 0;
 
         case WM_DESTROY: PostQuitMessage(0); return 0;
     }
@@ -415,13 +461,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow) {
     (void)hPrevInstance; (void)pCmdLine; (void)nCmdShow; QueryPerformanceFrequency(&gQpcFreq);
-    WNDCLASSA wc; ZeroMemory(&wc, sizeof(wc)); wc.lpfnWndProc = WindowProc; wc.hInstance = hInstance; wc.lpszClassName = "MacroGUI";
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW); wc.hCursor = LoadCursor(NULL, IDC_ARROW); RegisterClassA(&wc);
-    gHwndMain = CreateWindowA("MacroGUI", "Macro Editor", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 720, 600, NULL, NULL, hInstance, NULL);
+    
+    WNDCLASSW wc; ZeroMemory(&wc, sizeof(wc)); 
+    wc.lpfnWndProc = WindowProc; 
+    wc.hInstance = hInstance; 
+    wc.lpszClassName = L"MacroGUI";
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW); 
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW); 
+    RegisterClassW(&wc);
+    
+    gHwndMain = CreateWindowW(L"MacroGUI", L"Macro Editor", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 720, 600, NULL, NULL, hInstance, NULL);
+    
     RegisterHotKey(gHwndMain, 1, 0, VK_F1); RegisterHotKey(gHwndMain, 2, 0, VK_F2);
     RegisterHotKey(gHwndMain, 3, 0, VK_F3); RegisterHotKey(gHwndMain, 4, 0, VK_F4);
+    
     MSG msg; while (GetMessage(&msg, NULL, 0, 0)) { TranslateMessage(&msg); DispatchMessage(&msg); }
+    
     stop_recording(); stop_playback();
-    UnregisterHotKey(gHwndMain, 1); UnregisterHotKey(gHwndMain, 2); UnregisterHotKey(gHwndMain, 3); UnregisterHotKey(gHwndMain, 4);
+    UnregisterHotKey(gHwndMain, 1); UnregisterHotKey(gHwndMain, 2); 
+    UnregisterHotKey(gHwndMain, 3); UnregisterHotKey(gHwndMain, 4);
     clear_events(); return 0;
 }
