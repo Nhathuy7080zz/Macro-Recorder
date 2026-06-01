@@ -1,16 +1,11 @@
-#define WIN32_LEAN_AND_MEAN
+﻿#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #pragma pack(push, 1)
-typedef struct {
-    char magic[4];
-    uint32_t version;
-    uint32_t count;
-} MacroHeader;
-
 typedef struct {
     uint64_t timeUs;
     uint32_t vk;
@@ -20,7 +15,6 @@ typedef struct {
     int32_t y;
     uint8_t type;
     uint8_t down;
-    uint16_t reserved;
 } MacroEvent;
 #pragma pack(pop)
 
@@ -49,6 +43,7 @@ static LARGE_INTEGER gQpcFreq;
 
 // GUI Globals
 HWND gHwndMain, gHwndList, gHwndTime, gHwndP1, gHwndP2, gHwndUpdate, gHwndDelete;
+HWND gHwndLblP1, gHwndLblP2, gHwndStatus;
 int gSelectedEvent = -1;
 
 static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM wParam, LPARAM lParam);
@@ -63,15 +58,10 @@ static uint64_t now_us(void) {
 static void sleep_until_us(uint64_t targetUs) {
     for (;;) {
         uint64_t currentUs = now_us();
-        if (currentUs >= targetUs) {
-            break;
-        }
+        if (currentUs >= targetUs) break;
         uint64_t remainingUs = targetUs - currentUs;
-        if (remainingUs > 2000) {
-            Sleep((DWORD)((remainingUs - 1000) / 1000));
-        } else {
-            SwitchToThread();
-        }
+        if (remainingUs > 2000) Sleep((DWORD)((remainingUs - 1000) / 1000));
+        else SwitchToThread();
     }
 }
 
@@ -79,9 +69,7 @@ static int append_event(const MacroEvent* event) {
     if (gEventCount == gEventCapacity) {
         size_t newCapacity = gEventCapacity == 0 ? 256 : gEventCapacity * 2;
         MacroEvent* newEvents = (MacroEvent*)realloc(gEvents, newCapacity * sizeof(MacroEvent));
-        if (!newEvents) {
-            return 0;
-        }
+        if (!newEvents) return 0;
         gEvents = newEvents;
         gEventCapacity = newCapacity;
     }
@@ -90,10 +78,8 @@ static int append_event(const MacroEvent* event) {
 }
 
 static void clear_events(void) {
-    free(gEvents);
-    gEvents = NULL;
-    gEventCount = 0;
-    gEventCapacity = 0;
+    free(gEvents); gEvents = NULL;
+    gEventCount = 0; gEventCapacity = 0;
 }
 
 static void stop_playback(void) {
@@ -106,17 +92,16 @@ void RefreshList(void) {
     for (size_t i = 0; i < gEventCount; ++i) {
         MacroEvent* e = &gEvents[i];
         if (e->type == EVENT_KEY) {
-            sprintf(buf, "[%zu] %llu ms - KEY vk:%u %s", i, (unsigned long long)(e->timeUs / 1000ULL), e->vk, e->down ? "DOWN" : "UP");
+            sprintf(buf, "[%zu] %llu ms - [Phím] VK:%u %s", i, (unsigned long long)(e->timeUs / 1000ULL), e->vk, e->down ? "(Nhấn)" : "(Thả)");
         } else if (e->type == EVENT_MOUSE_MOVE) {
-            sprintf(buf, "[%zu] %llu ms - MOVE x:%d y:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->x, e->y);
+            sprintf(buf, "[%zu] %llu ms - [Chuột] Di chuyển đến X:%d Y:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->x, e->y);
         } else if (e->type == EVENT_MOUSE_BUTTON) {
-            sprintf(buf, "[%zu] %llu ms - MBTN flag:%u data:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->mouseFlags, e->mouseData);
+            sprintf(buf, "[%zu] %llu ms - [Chuột] Click flag:%u data:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->mouseFlags, e->mouseData);
         } else if (e->type == EVENT_MOUSE_WHEEL) {
-            sprintf(buf, "[%zu] %llu ms - WHL flag:%u data:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->mouseFlags, e->mouseData);
+            sprintf(buf, "[%zu] %llu ms - [Chuột] Cuộn flag:%u data:%d", i, (unsigned long long)(e->timeUs / 1000ULL), e->mouseFlags, e->mouseData);
         } else {
             sprintf(buf, "[%zu] %llu ms - UNKNOWN", i, (unsigned long long)(e->timeUs / 1000ULL));
         }
-
         LRESULT idx = SendMessageA(gHwndList, LB_ADDSTRING, 0, (LPARAM)buf);
         SendMessage(gHwndList, LB_SETITEMDATA, idx, (LPARAM)i);
     }
@@ -126,10 +111,10 @@ static void stop_recording(void) {
     if (InterlockedExchange(&gRecording, 0) == 1) {
         UnhookWindowsHookEx(gKeyboardHook);
         UnhookWindowsHookEx(gMouseHook);
-        gKeyboardHook = NULL;
-        gMouseHook = NULL;
+        gKeyboardHook = NULL; gMouseHook = NULL;
         RefreshList();
-        MessageBoxA(gHwndMain, "Recording stopped.", "Info", MB_OK);
+        SetWindowTextA(gHwndStatus, "Trạng thái: 🟢 Đã dừng ghi (Sẵn sàng)");
+        MessageBoxA(gHwndMain, "Đã dừng ghi macro.", "Thông báo", MB_OK);
     }
 }
 
@@ -137,10 +122,9 @@ static void start_recording(void) {
     if (InterlockedCompareExchange(&gRecording, 1, 0) != 0) return;
     if (InterlockedCompareExchange(&gPlaying, 0, 0) != 0) {
         InterlockedExchange(&gRecording, 0);
-        MessageBoxA(gHwndMain, "Please stop playback before recording.", "Warning", MB_OK | MB_ICONWARNING);
+        MessageBoxA(gHwndMain, "Vui lòng dừng phát macro trước khi ghi.", "Cảnh báo", MB_OK | MB_ICONWARNING);
         return; 
     }
-
     stop_playback();
     clear_events();
     RefreshList();
@@ -153,70 +137,94 @@ static void start_recording(void) {
     if (!gKeyboardHook || !gMouseHook) {
         if (gKeyboardHook) UnhookWindowsHookEx(gKeyboardHook);
         if (gMouseHook) UnhookWindowsHookEx(gMouseHook);
-        gKeyboardHook = NULL;
-        gMouseHook = NULL;
+        gKeyboardHook = NULL; gMouseHook = NULL;
         InterlockedExchange(&gRecording, 0);
-        MessageBoxA(gHwndMain, "Failed to start recording hook.", "Error", MB_OK | MB_ICONERROR);
+        MessageBoxA(gHwndMain, "Lỗi chạy hook.", "Lỗi", MB_OK | MB_ICONERROR);
+    } else {
+        SetWindowTextA(gHwndStatus, "Trạng thái: 🔴 ĐANG GHI MACRO (Bấm F2 để dừng) ...");
     }
 }
 
 static int save_macro(const char* path) {
-    FILE* file = fopen(path, "wb");
+    FILE* file = fopen(path, "w");
     if (!file) return 0;
-
-    MacroHeader header = { {'M','C','R','1'}, 1, (uint32_t)gEventCount };
-    int ok = fwrite(&header, sizeof(header), 1, file) == 1 &&
-             (gEventCount == 0 || fwrite(gEvents, sizeof(MacroEvent), gEventCount, file) == gEventCount);
+    
+    fprintf(file, "[\n");
+    for (size_t i = 0; i < gEventCount; ++i) {
+        MacroEvent* e = &gEvents[i];
+        fprintf(file, "  {\n");
+        fprintf(file, "    \"timeUs\": %llu,\n", (unsigned long long)e->timeUs);
+        fprintf(file, "    \"type\": %u,\n", e->type);
+        fprintf(file, "    \"vk\": %u,\n", e->vk);
+        fprintf(file, "    \"mouseFlags\": %u,\n", e->mouseFlags);
+        fprintf(file, "    \"mouseData\": %d,\n", e->mouseData);
+        fprintf(file, "    \"x\": %d,\n", e->x);
+        fprintf(file, "    \"y\": %d,\n", e->y);
+        fprintf(file, "    \"down\": %u\n", e->down);
+        fprintf(file, "  }%s\n", (i == gEventCount - 1) ? "" : ",");
+    }
+    fprintf(file, "]\n");
     fclose(file);
-    return ok;
+    return 1;
 }
 
 static int load_macro(const char* path) {
     if (InterlockedCompareExchange(&gRecording, 0, 0) != 0 || InterlockedCompareExchange(&gPlaying, 0, 0) != 0) {
-        MessageBoxA(gHwndMain, "Stop recording/playback first.", "Warning", MB_OK | MB_ICONWARNING);
+        MessageBoxA(gHwndMain, "Dừng ghi/phát trước khi Load.", "Cảnh báo", MB_OK | MB_ICONWARNING);
         return 0;
     }
-
-    FILE* file = fopen(path, "rb");
+    FILE* file = fopen(path, "r");
     if (!file) return 0;
 
-    MacroHeader header;
-    if (fread(&header, sizeof(header), 1, file) != 1 || 
-        header.magic[0] != 'M' || header.magic[1] != 'C' || 
-        header.magic[2] != 'R' || header.magic[3] != '1' || header.version != 1) {
-        fclose(file); return 0;
-    }
+    fseek(file, 0, SEEK_END);
+    long len = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    if (len <= 0) { fclose(file); return 0; }
 
-    MacroEvent* loaded = NULL;
-    if (header.count > 0) {
-        loaded = (MacroEvent*)malloc((size_t)header.count * sizeof(MacroEvent));
-        if (!loaded || fread(loaded, sizeof(MacroEvent), header.count, file) != header.count) {
-            free(loaded); fclose(file); return 0;
-        }
-    }
-
+    char* buf = (char*)malloc(len + 1);
+    if (!buf) { fclose(file); return 0; }
+    fread(buf, 1, len, file);
+    buf[len] = '\0';
     fclose(file);
+
     clear_events();
-    gEvents = loaded;
-    gEventCount = header.count;
-    gEventCapacity = header.count;
+
+    char* ptr = buf;
+    while ((ptr = strstr(ptr, "{")) != NULL) {
+        char* end = strstr(ptr, "}");
+        if (!end) break;
+        *end = '\0';
+
+        MacroEvent e; ZeroMemory(&e, sizeof(e));
+        char* p;
+        if ((p = strstr(ptr, "\"timeUs\""))) { p = strchr(p, ':'); if (p) e.timeUs = strtoull(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"type\""))) { p = strchr(p, ':'); if (p) e.type = (uint8_t)strtoul(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"vk\""))) { p = strchr(p, ':'); if (p) e.vk = (uint32_t)strtoul(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"mouseFlags\""))) { p = strchr(p, ':'); if (p) e.mouseFlags = (uint32_t)strtoul(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"mouseData\""))) { p = strchr(p, ':'); if (p) e.mouseData = (int32_t)strtol(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"x\""))) { p = strchr(p, ':'); if (p) e.x = (int32_t)strtol(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"y\""))) { p = strchr(p, ':'); if (p) e.y = (int32_t)strtol(p+1, NULL, 10); }
+        if ((p = strstr(ptr, "\"down\""))) { p = strchr(p, ':'); if (p) e.down = (uint8_t)strtoul(p+1, NULL, 10); }
+        append_event(&e);
+        *end = '}';
+        ptr = end + 1;
+    }
+    
+    free(buf);
     RefreshList();
     return 1;
 }
 
 static void send_mouse_button(DWORD flags, int x, int y, DWORD data) {
     INPUT input; ZeroMemory(&input, sizeof(input));
-    input.type = INPUT_MOUSE;
-    input.mi.dx = x; input.mi.dy = y;
-    input.mi.dwFlags = flags;
-    input.mi.mouseData = data;
+    input.type = INPUT_MOUSE; input.mi.dx = x; input.mi.dy = y;
+    input.mi.dwFlags = flags; input.mi.mouseData = data;
     SendInput(1, &input, sizeof(input));
 }
 
 static void send_key(uint32_t vk, DWORD flags) {
     INPUT input; ZeroMemory(&input, sizeof(input));
-    input.type = INPUT_KEYBOARD;
-    input.ki.wVk = (WORD)vk;
+    input.type = INPUT_KEYBOARD; input.ki.wVk = (WORD)vk;
     input.ki.wScan = (WORD)MapVirtualKeyA((UINT)vk, MAPVK_VK_TO_VSC);
     input.ki.dwFlags = flags;
     SendInput(1, &input, sizeof(input));
@@ -225,16 +233,14 @@ static void send_key(uint32_t vk, DWORD flags) {
 static DWORD WINAPI playback_thread(LPVOID unused) {
     (void)unused;
     if (gEventCount == 0) { InterlockedExchange(&gPlaying, 0); return 0; }
-
+    
     InterlockedExchange(&gStopPlayback, 0);
     uint64_t playStartUs = now_us();
 
     for (size_t i = 0; i < gEventCount; ++i) {
         if (InterlockedCompareExchange(&gStopPlayback, 0, 0) != 0) break;
-        
         const MacroEvent* event = &gEvents[i];
         sleep_until_us(playStartUs + event->timeUs);
-        
         if (InterlockedCompareExchange(&gStopPlayback, 0, 0) != 0) break;
 
         switch (event->type) {
@@ -245,6 +251,7 @@ static DWORD WINAPI playback_thread(LPVOID unused) {
         }
     }
     InterlockedExchange(&gPlaying, 0);
+    SetWindowTextA(gHwndStatus, "Trạng thái: 🟢 IDLE (Đã chạy xong)");
     return 0;
 }
 
@@ -252,10 +259,13 @@ static void start_playback(void) {
     if (InterlockedCompareExchange(&gPlaying, 1, 0) != 0) return;
     stop_recording();
     InterlockedExchange(&gStopPlayback, 0);
+    SetWindowTextA(gHwndStatus, "Trạng thái: ⏳ ĐANG PHÁT MACRO (F4 để dừng)");
 
     HANDLE thread = CreateThread(NULL, 0, playback_thread, NULL, 0, NULL);
-    if (!thread) InterlockedExchange(&gPlaying, 0);
-    else CloseHandle(thread);
+    if (!thread) {
+        InterlockedExchange(&gPlaying, 0);
+        SetWindowTextA(gHwndStatus, "Trạng thái: Lỗi không thể phát.");
+    } else CloseHandle(thread);
 }
 
 static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM wParam, LPARAM lParam) {
@@ -267,8 +277,7 @@ static LRESULT CALLBACK keyboard_hook_proc(int code, WPARAM wParam, LPARAM lPara
             if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN || wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
                 MacroEvent event; ZeroMemory(&event, sizeof(event));
                 event.timeUs = now_us() - gRecordStartUs;
-                event.type = EVENT_KEY;
-                event.vk = data->vkCode;
+                event.type = EVENT_KEY; event.vk = data->vkCode;
                 event.down = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) ? 1 : 0;
                 append_event(&event);
             }
@@ -303,8 +312,13 @@ static LRESULT CALLBACK mouse_hook_proc(int code, WPARAM wParam, LPARAM lParam) 
                     else if (wParam == WM_RBUTTONUP) event.mouseFlags = MOUSEEVENTF_RIGHTUP;
                     else if (wParam == WM_MBUTTONDOWN) event.mouseFlags = MOUSEEVENTF_MIDDLEDOWN;
                     else if (wParam == WM_MBUTTONUP) event.mouseFlags = MOUSEEVENTF_MIDDLEUP;
-                    else if (wParam == WM_XBUTTONDOWN) { event.mouseFlags = MOUSEEVENTF_XDOWN; event.mouseData = (HIWORD(data->mouseData) == XBUTTON1) ? XBUTTON1 : XBUTTON2; }
-                    else { event.mouseFlags = MOUSEEVENTF_XUP; event.mouseData = (HIWORD(data->mouseData) == XBUTTON1) ? XBUTTON1 : XBUTTON2; }
+                    else if (wParam == WM_XBUTTONDOWN) { 
+                        event.mouseFlags = MOUSEEVENTF_XDOWN; 
+                        event.mouseData = (HIWORD(data->mouseData) == XBUTTON1) ? XBUTTON1 : XBUTTON2; 
+                    } else { 
+                        event.mouseFlags = MOUSEEVENTF_XUP; 
+                        event.mouseData = (HIWORD(data->mouseData) == XBUTTON1) ? XBUTTON1 : XBUTTON2; 
+                    }
                     append_event(&event);
                     break;
                 case WM_MOUSEWHEEL:
@@ -334,14 +348,23 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     if (gSelectedEvent >= 0 && gSelectedEvent < (int)gEventCount) {
                         MacroEvent* e = &gEvents[gSelectedEvent];
                         char buf[64];
-                        sprintf(buf, "%llu", (unsigned long long)(e->timeUs / 1000ULL)); SetWindowTextA(gHwndTime, buf);
+                        
+                        sprintf(buf, "%llu", (unsigned long long)(e->timeUs / 1000ULL)); 
+                        SetWindowTextA(gHwndTime, buf);
+                        
                         if (e->type == EVENT_KEY) {
+                            SetWindowTextA(gHwndLblP1, "Phím (Mã VK):");
+                            SetWindowTextA(gHwndLblP2, "Hành động (1=Nhấn, 0=Thả):");
                             sprintf(buf, "%u", e->vk); SetWindowTextA(gHwndP1, buf);
                             sprintf(buf, "%u", e->down); SetWindowTextA(gHwndP2, buf);
                         } else if (e->type == EVENT_MOUSE_MOVE) {
+                            SetWindowTextA(gHwndLblP1, "Tọa độ X:");
+                            SetWindowTextA(gHwndLblP2, "Tọa độ Y:");
                             sprintf(buf, "%d", e->x); SetWindowTextA(gHwndP1, buf);
                             sprintf(buf, "%d", e->y); SetWindowTextA(gHwndP2, buf);
                         } else {
+                            SetWindowTextA(gHwndLblP1, "Mouse Flag (Mã nút):");
+                            SetWindowTextA(gHwndLblP2, "Mouse Data:");
                             sprintf(buf, "%u", e->mouseFlags); SetWindowTextA(gHwndP1, buf);
                             sprintf(buf, "%d", e->mouseData); SetWindowTextA(gHwndP2, buf);
                         }
@@ -355,9 +378,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     GetWindowTextA(gHwndP1, buf, sizeof(buf)); int p1 = atoi(buf);
                     GetWindowTextA(gHwndP2, buf, sizeof(buf)); int p2 = atoi(buf);
 
-                    if (e->type == EVENT_KEY) { e->vk = p1; e->down = p2; }
+                    if (e->type == EVENT_KEY) { e->vk = (uint32_t)p1; e->down = (uint8_t)p2; }
                     else if (e->type == EVENT_MOUSE_MOVE) { e->x = p1; e->y = p2; }
-                    else { e->mouseFlags = p1; e->mouseData = p2; }
+                    else { e->mouseFlags = (uint32_t)p1; e->mouseData = p2; }
 
                     int prevSel = (int)SendMessage(gHwndList, LB_GETCURSEL, 0, 0);
                     RefreshList();
@@ -374,6 +397,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     SetWindowTextA(gHwndTime, "");
                     SetWindowTextA(gHwndP1, "");
                     SetWindowTextA(gHwndP2, "");
+                    SetWindowTextA(gHwndLblP1, "Param 1:");
+                    SetWindowTextA(gHwndLblP2, "Param 2:");
                 }
             }
             return 0;
@@ -383,13 +408,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 case 1: start_recording(); break;
                 case 2: stop_recording(); break;
                 case 3: start_playback(); break;
-                case 4: stop_playback(); break;
-                case 5: if (save_macro("macro.bin")) MessageBoxA(hwnd, "Saved to macro.bin", "Info", MB_OK); break;
+                case 4: 
+                    stop_playback(); 
+                    SetWindowTextA(gHwndStatus, "Trạng thái: 🟢 Đã ngắt phát (IDLE)");
+                    break;
+                case 5: if (save_macro("macro.json")) MessageBoxA(hwnd, "Lưu JSON thành công (macro.json)!", "Xong", MB_OK); break;
                 case 6: 
-                    if (load_macro("macro.bin")) {
-                        MessageBoxA(hwnd, "Loaded macro.bin", "Info", MB_OK);
+                    if (load_macro("macro.json")) {
+                        MessageBoxA(hwnd, "Đã nạp file macro.json", "Xong", MB_OK);
                     } else {
-                        MessageBoxA(hwnd, "Failed to load macro.bin", "Error", MB_OK | MB_ICONERROR);
+                        MessageBoxA(hwnd, "Không thể đọc macro.json hoặc sai form", "Lỗi", MB_OK | MB_ICONERROR);
                     }
                     break;
             }
@@ -414,26 +442,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassA(&wc);
 
-    gHwndMain = CreateWindowA("MacroGUI", "Macro Editor", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 620, 480, NULL, NULL, hInstance, NULL);
+    gHwndMain = CreateWindowA("MacroGUI", "Macro Editor (JSON Edition)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 700, 560, NULL, NULL, hInstance, NULL);
+
+    gHwndStatus = CreateWindowA("STATIC", "Trạng thái: 🟢 Khởi động xong (IDLE)", WS_CHILD | WS_VISIBLE, 
+        10, 10, 660, 20, gHwndMain, NULL, hInstance, NULL);
 
     gHwndList = CreateWindowA("LISTBOX", NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_NOTIFY | LBS_HASSTRINGS,
-        10, 10, 380, 420, gHwndMain, (HMENU)1001, hInstance, NULL);
+        10, 40, 420, 460, gHwndMain, (HMENU)1001, hInstance, NULL);
 
-    CreateWindowA("STATIC", "Time (ms):", WS_CHILD | WS_VISIBLE, 400, 10, 190, 20, gHwndMain, NULL, hInstance, NULL);
-    gHwndTime = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 400, 30, 190, 24, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "Thời gian chờ (ms):", WS_CHILD | WS_VISIBLE, 450, 40, 190, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndTime = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 450, 60, 210, 24, gHwndMain, NULL, hInstance, NULL);
 
-    CreateWindowA("STATIC", "Param 1 (VK / X / Flags):", WS_CHILD | WS_VISIBLE, 400, 70, 190, 20, gHwndMain, NULL, hInstance, NULL);
-    gHwndP1 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 400, 90, 190, 24, gHwndMain, NULL, hInstance, NULL);
+    gHwndLblP1 = CreateWindowA("STATIC", "Thông số 1:", WS_CHILD | WS_VISIBLE, 450, 100, 210, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndP1 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 450, 120, 210, 24, gHwndMain, NULL, hInstance, NULL);
 
-    CreateWindowA("STATIC", "Param 2 (Down / Y / Data):", WS_CHILD | WS_VISIBLE, 400, 130, 190, 20, gHwndMain, NULL, hInstance, NULL);
-    gHwndP2 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 400, 150, 190, 24, gHwndMain, NULL, hInstance, NULL);
+    gHwndLblP2 = CreateWindowA("STATIC", "Thông số 2:", WS_CHILD | WS_VISIBLE, 450, 160, 210, 20, gHwndMain, NULL, hInstance, NULL);
+    gHwndP2 = CreateWindowA("EDIT", "", WS_CHILD | WS_VISIBLE | WS_BORDER, 450, 180, 210, 24, gHwndMain, NULL, hInstance, NULL);
 
-    gHwndUpdate = CreateWindowA("BUTTON", "Update Selected", WS_CHILD | WS_VISIBLE, 400, 190, 190, 30, gHwndMain, (HMENU)1005, hInstance, NULL);
-    gHwndDelete = CreateWindowA("BUTTON", "Delete Selected", WS_CHILD | WS_VISIBLE, 400, 230, 190, 30, gHwndMain, (HMENU)1006, hInstance, NULL);
+    gHwndUpdate = CreateWindowA("BUTTON", "Lưu thay đổi dòng này", WS_CHILD | WS_VISIBLE, 450, 220, 210, 35, gHwndMain, (HMENU)1005, hInstance, NULL);
+    gHwndDelete = CreateWindowA("BUTTON", "Xóa dòng này", WS_CHILD | WS_VISIBLE, 450, 265, 210, 35, gHwndMain, (HMENU)1006, hInstance, NULL);
 
-    CreateWindowA("STATIC", "Hotkeys:\nF1: Start Recording\nF2: Stop Recording\nF3: Play Macro\nF4: Stop Playback\nF5: Save macro.bin\nF6: Load macro.bin", 
-        WS_CHILD | WS_VISIBLE, 400, 280, 190, 120, gHwndMain, NULL, hInstance, NULL);
+    CreateWindowA("STATIC", "--- PHÍM TẮT TRÊN BÀN PHÍM ---\n\nF1: Bắt đầu ghi\nF2: Dừng ghi\nF3: Chạy macro\nF4: Dừng chạy\nF5: Lưu file macro.json\nF6: Mở file macro.json", 
+        WS_CHILD | WS_VISIBLE, 450, 330, 210, 160, gHwndMain, NULL, hInstance, NULL);
 
     HFONT hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
     EnumChildWindows(gHwndMain, SetFontProc, (LPARAM)hFont);
@@ -453,12 +484,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     stop_recording();
     stop_playback();
-    UnregisterHotKey(gHwndMain, 1);
-    UnregisterHotKey(gHwndMain, 2);
-    UnregisterHotKey(gHwndMain, 3);
-    UnregisterHotKey(gHwndMain, 4);
-    UnregisterHotKey(gHwndMain, 5);
-    UnregisterHotKey(gHwndMain, 6);
+    UnregisterHotKey(gHwndMain, 1); UnregisterHotKey(gHwndMain, 2);
+    UnregisterHotKey(gHwndMain, 3); UnregisterHotKey(gHwndMain, 4);
+    UnregisterHotKey(gHwndMain, 5); UnregisterHotKey(gHwndMain, 6);
     clear_events();
     return 0;
 }
