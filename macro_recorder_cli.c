@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+int gLang = 1;
 
 #pragma pack(push, 1)
 
@@ -203,7 +204,7 @@ static int load_macro(const char* path) {
     }
     
     free(buf);
-    printf("Loaded %zu events from %s\n", gEventCount, path);
+    printf(gLang ? "Da doc %zu su kien tu %s\n" : "Loaded %zu events from %s\n", gEventCount, path);
     return 1;
 }
 
@@ -385,18 +386,18 @@ static LRESULT CALLBACK mouse_hook_proc(int code, WPARAM wParam, LPARAM lParam) 
 }
 
 static void print_help(void) {
-    printf("F1: start recording\n");
-    printf("F2: stop recording\n");
-    printf("F3: play loaded/current macro\n");
-    printf("F4: stop playback\n");
-    printf("F5: save macro.json\n");
-    printf("F6: load macro.json\n");
-    printf("Events are captured globally on this machine.\n");
+    if (gLang) {
+        printf("MACRO RECORDER CLI\nF1: Ghi lén, F2: Dừng ghi\nF3: Phát, F4: Dừng phát\nF5: Lưu JSON, F6: Đọc JSON\n");
+    } else {
+        printf("MACRO RECORDER CLI\nF1: Record, F2: Stop Rec\nF3: Play, F4: Stop Play\nF5: Save JSON, F6: Load JSON\n");
+    }
 }
 
-int main(void) {
+
+int main(int argc, char* argv[]) {
     QueryPerformanceFrequency(&gQpcFreq);
-    print_help();
+    if (argc > 1 && strcmp(argv[1], "-en") == 0) { gLang = 0; }
+print_help();
 
     RegisterHotKey(NULL, 1, 0, VK_F1);
     RegisterHotKey(NULL, 2, 0, VK_F2);
@@ -450,3 +451,7 @@ int main(void) {
     clear_events();
     return 0;
 }
+
+
+
+
